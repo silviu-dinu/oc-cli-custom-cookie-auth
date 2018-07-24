@@ -20,7 +20,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
+	//"os"
+	"io/ioutil"
+	"os/user"
 
 	"k8s.io/apimachinery/pkg/util/httpstream"
 	"k8s.io/apimachinery/pkg/util/httpstream/spdy"
@@ -82,7 +84,11 @@ func Negotiate(upgrader Upgrader, client *http.Client, req *http.Request, protoc
 	for i := range protocols {
 		req.Header.Add(httpstream.HeaderProtocolVersion, protocols[i])
 	}
-	req.Header.Add("Cookie", os.Getenv("COOKIE_SPX_STICKY_CLOUDLET"))
+
+	usr, _ := user.Current()
+	spxCookie, _ := ioutil.ReadFile(usr.HomeDir + "/oc-login.cookie")
+	req.Header.Add("Cookie", string(spxCookie))
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, "", fmt.Errorf("error sending request: %v", err)

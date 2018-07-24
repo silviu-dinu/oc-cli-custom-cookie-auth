@@ -4,6 +4,18 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"net/http"
+	"net/http/cookiejar"
+	"golang.org/x/net/publicsuffix"
+	"crypto/tls"
+	curl "github.com/andelf/go-curl"
+	"regexp"
+	"strings"
+	"io/ioutil"
+	"html"
+	"github.com/manifoldco/promptui"
+	"os/user"
+	"path/filepath"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -160,7 +172,7 @@ func (o LoginOptions) Validate(cmd *cobra.Command, serverFlag string, args []str
 	}
 
 	if len(o.Username) > 0 && len(o.Token) > 0 {
-		return errors.New("--token and --username are mutually exclusive")
+		// return errors.New("--token and --username are mutually exclusive")
 	}
 
 	if o.StartingKubeConfig == nil {
@@ -172,6 +184,170 @@ func (o LoginOptions) Validate(cmd *cobra.Command, serverFlag string, args []str
 
 // RunLogin contains all the necessary functionality for the OpenShift cli login command
 func (o LoginOptions) Run() error {
+
+	// Prompt username and password
+	usernamePrompt := promptui.Prompt {
+		Label:    "Username ",
+	}
+	USERNAME, err := usernamePrompt.Run()
+	o.Username = USERNAME
+
+	passwordPrompt := promptui.Prompt {
+		Label:    "Password ",
+		Mask:     '*',
+	}
+	PASSWORD, err := passwordPrompt.Run()
+
+	// Setup cookie jar
+	jar, err := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
+	if err != nil {
+		return err
+	}
+	// Setup http client
+	tr := &http.Transport{
+      TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+  }
+	client := &http.Client {
+		Jar: jar,
+		Transport: tr,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+        return http.ErrUseLastResponse
+    },
+	}
+	userAgent := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.1.2 Safari/605.1.15"
+
+	// Perform initial request
+	OSServerNoPortRegex, _ := regexp.Compile("(https?://.*?):")
+	OSServerNoPort := OSServerNoPortRegex.FindStringSubmatch(o.Server)[1]
+	req, err := http.NewRequest("GET", OSServerNoPort, nil)
+	req.Header.Add("User-Agent", userAgent)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	var nextLocation = resp.Header.Get("Location")
+
+	// First redirect
+	req, err = http.NewRequest("GET", nextLocation, nil)
+	req.Header.Add("User-Agent", userAgent)
+	resp, err = client.Do(req)
+	if err != nil {
+		return err
+	}
+	nextLocation = resp.Header.Get("Location")
+	//fmt.Println(nextLocation)
+
+	// Second redirect
+	req, err = http.NewRequest("GET", nextLocation, nil)
+	req.Header.Add("User-Agent", userAgent)
+	resp, err = client.Do(req)
+	if err != nil {
+		return err
+	}
+	nextLocation = resp.Header.Get("Location")
+	//fmt.Println(nextLocation)
+
+	// Send auth credentials
+	easy := curl.EasyInit()
+	htmlForm := ""
+	defer easy.Cleanup()
+	if easy == nil {
+		fmt.Println("Could not init CURL client")
+	}
+	easy.Setopt(curl.OPT_URL, nextLocation)
+	easy.Setopt(curl.OPT_HEADER, true)
+	easy.Setopt(curl.OPT_HTTPHEADER, []string{"User-Agent: " + userAgent})
+	easy.Setopt(curl.OPT_HTTPAUTH, curl.AUTH_NTLM)
+	easy.Setopt(curl.OPT_USERPWD, USERNAME + ":" + PASSWORD)
+	easy.Setopt(curl.OPT_WRITEFUNCTION, func(ptr []byte, userdata interface{}) bool {
+		htmlForm = htmlForm + string(ptr)
+		return true
+	})
+	easy.Setopt(curl.OPT_WRITEDATA, htmlForm)
+	easy.Perform()
+	SAMLResponseRegex, _ := regexp.Compile("SAMLResponse\" value=\"(.*?)\"")
+	SAMLResponseMatch := SAMLResponseRegex.FindStringSubmatch(htmlForm)
+	if len(SAMLResponseMatch) < 1 {
+		fmt.Println("Login failed: Invalid credentials!")
+		os.Exit(1)
+	}
+	SAMLResponse := SAMLResponseMatch[1]
+
+	FormActionRegex, _ := regexp.Compile("name=\"hiddenform\" action=\"(.*?)\"")
+	FormAction := FormActionRegex.FindStringSubmatch(htmlForm)[1]
+
+	RelayStateRegex, _ := regexp.Compile("RelayState\" value=\"(.*?)\"")
+	RelayState := RelayStateRegex.FindStringSubmatch(htmlForm)[1]
+
+	RelayBaseUrlRegex, _ := regexp.Compile("(https?://.*?)/")
+	RelayBaseUrl := RelayBaseUrlRegex.FindStringSubmatch(FormAction)[1]
+
+	// Send POST Request
+	form := url.Values{}
+	form.Add("SAMLResponse", SAMLResponse)
+	form.Add("RelayState", RelayState)
+	req, err = http.NewRequest("POST", FormAction, strings.NewReader(form.Encode()))
+	req.Header.Add("User-Agent", userAgent)
+	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+	resp, err = client.Do(req)
+	if err != nil {
+		return err
+	}
+	nextLocation = resp.Header.Get("Location")
+	//fmt.Println(nextLocation)
+
+	// Redirect to Relay
+	RelayUrl := RelayBaseUrl + nextLocation
+	req, err = http.NewRequest("GET", RelayUrl, nil)
+	req.Header.Add("User-Agent", userAgent)
+	resp, err = client.Do(req)
+	if err != nil {
+		return err
+	}
+	bodyBytes, _ := ioutil.ReadAll(resp.Body)
+  bodyString := string(bodyBytes)
+	//fmt.Println(bodyString)
+
+	BubbleResponseUrlRegex, _ := regexp.Compile("UnescapeHtml\\('(.*?)'")
+	BubbleResponseUrl := BubbleResponseUrlRegex.FindStringSubmatch(bodyString)[1]
+	BubbleResponseUrl = html.UnescapeString(BubbleResponseUrl)
+	//fmt.Println(BubbleResponseUrl)
+
+	// Redirect to bubble response
+	req, err = http.NewRequest("GET", BubbleResponseUrl, nil)
+	req.Header.Add("User-Agent", userAgent)
+	resp, err = client.Do(req)
+	if err != nil {
+		return err
+	}
+	BubbleAppCookie := resp.Cookies()[0].Name + "=" + resp.Cookies()[0].Value
+	//fmt.Println(BubbleAppCookie)
+
+	OSBaseUrlRegex, _ := regexp.Compile("(https?://.*?)\\?|/")
+	OSBaseUrl := OSBaseUrlRegex.FindStringSubmatch(BubbleResponseUrl)[1]
+	//fmt.Println(OSBaseUrl)
+
+	// Final redirect - get SPX cookie
+	req, err = http.NewRequest("GET", OSBaseUrl, nil)
+	req.Header.Add("User-Agent", userAgent)
+	resp, err = client.Do(req)
+	if err != nil {
+		return err
+	}
+	SPXStickyCloudletCookie := resp.Cookies()[0].Name + "=" + resp.Cookies()[0].Value
+	//fmt.Println(resp.Cookies())
+
+	COOKIE_SPX_AUTH_FULL := SPXStickyCloudletCookie + "; " + BubbleAppCookie
+	//fmt.Println(COOKIE_SPX_AUTH_FULL)
+
+	// Write cookie to file
+	usr, err := user.Current()
+	if err != nil {
+  	return err
+  }
+	d1 := []byte(COOKIE_SPX_AUTH_FULL)
+	ioutil.WriteFile(filepath.FromSlash(usr.HomeDir + "/oc-login.cookie"), d1, 0644)
+
 	if err := o.GatherInfo(); err != nil {
 		return err
 	}

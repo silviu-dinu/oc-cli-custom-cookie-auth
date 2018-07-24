@@ -21,6 +21,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"os/user"
+	"io/ioutil"
 
 	"github.com/golang/glog"
 
@@ -37,6 +39,7 @@ func HTTPWrappersForConfig(config *Config, rt http.RoundTripper) (http.RoundTrip
 		rt = config.WrapTransport(rt)
 	}
 
+	rt = NewCustomNTLMAuthRoundTripper(rt)
 	rt = DebugWrappers(rt)
 
 	// Set authentication wrappers
@@ -202,6 +205,34 @@ func (rt *basicAuthRoundTripper) CancelRequest(req *http.Request) {
 }
 
 func (rt *basicAuthRoundTripper) WrappedRoundTripper() http.RoundTripper { return rt.rt }
+
+//===
+type customNTLMAuthRoundTripper struct {
+	rt       http.RoundTripper
+}
+
+func NewCustomNTLMAuthRoundTripper(rt http.RoundTripper) http.RoundTripper {
+	return &customNTLMAuthRoundTripper{rt}
+}
+
+func (rt *customNTLMAuthRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	usr, _ := user.Current()
+	spxCookie, _ := ioutil.ReadFile(usr.HomeDir + "/oc-login.cookie")
+	req.Header.Add("Cookie", string(spxCookie))
+
+	return rt.rt.RoundTrip(req)
+}
+
+func (rt *customNTLMAuthRoundTripper) CancelRequest(req *http.Request) {
+	if canceler, ok := rt.rt.(requestCanceler); ok {
+		canceler.CancelRequest(req)
+	} else {
+		glog.Errorf("CancelRequest not implemented")
+	}
+}
+
+func (rt *customNTLMAuthRoundTripper) WrappedRoundTripper() http.RoundTripper { return rt.rt }
+//===
 
 // These correspond to the headers used in pkg/apis/authentication.  We don't want the package dependency,
 // but you must not change the values.

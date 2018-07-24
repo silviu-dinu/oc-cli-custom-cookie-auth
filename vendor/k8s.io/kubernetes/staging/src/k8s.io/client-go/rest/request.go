@@ -31,6 +31,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"os/user"
 
 	"github.com/golang/glog"
 	"golang.org/x/net/http2"
@@ -44,7 +45,6 @@ import (
 	restclientwatch "k8s.io/client-go/rest/watch"
 	"k8s.io/client-go/tools/metrics"
 	"k8s.io/client-go/util/flowcontrol"
-	"os"
 )
 
 var (
@@ -140,7 +140,10 @@ func NewRequest(client HTTPClient, verb string, baseURL *url.URL, versionedAPIPa
 	case len(content.ContentType) > 0:
 		r.SetHeader("Accept", content.ContentType+", */*")
 	}
-  r.SetHeader("Cookie", os.Getenv("COOKIE_SPX_STICKY_CLOUDLET"))
+
+	usr, _ := user.Current()
+	spxCookie, _ := ioutil.ReadFile(usr.HomeDir + "/oc-login.cookie")
+  r.SetHeader("Cookie", string(spxCookie))
 
 	return r
 }
