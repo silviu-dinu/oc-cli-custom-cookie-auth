@@ -157,6 +157,8 @@ func NewUserAgentRoundTripper(agent string, rt http.RoundTripper) http.RoundTrip
 }
 
 func (rt *userAgentRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	userAgent := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.1.2 Safari/605.1.15"
+	req.Header.Set("User-Agent", userAgent)
 	if len(req.Header.Get("User-Agent")) != 0 {
 		return rt.rt.RoundTrip(req)
 	}
@@ -218,6 +220,8 @@ func NewCustomNTLMAuthRoundTripper(rt http.RoundTripper) http.RoundTripper {
 func (rt *customNTLMAuthRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	usr, _ := user.Current()
 	spxCookie, _ := ioutil.ReadFile(usr.HomeDir + "/oc-login.cookie")
+	userAgent := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.1.2 Safari/605.1.15"
+	req.Header.Add("User-Agent", userAgent)
 	req.Header.Add("Cookie", string(spxCookie))
 
 	return rt.rt.RoundTrip(req)

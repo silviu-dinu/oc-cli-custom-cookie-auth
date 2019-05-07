@@ -334,7 +334,10 @@ func (o LoginOptions) Run() error {
 	if err != nil {
 		return err
 	}
-	SPXStickyCloudletCookie := resp.Cookies()[0].Name + "=" + resp.Cookies()[0].Value
+	SPXStickyCloudletCookie := "a=b"
+	if (len(resp.Cookies()) > 0) {
+		SPXStickyCloudletCookie = resp.Cookies()[0].Name + "=" + resp.Cookies()[0].Value
+	}
 	//fmt.Println(resp.Cookies())
 
 	COOKIE_SPX_AUTH_FULL := SPXStickyCloudletCookie + "; " + BubbleAppCookie
