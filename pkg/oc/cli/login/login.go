@@ -8,7 +8,6 @@ import (
 	"net/http/cookiejar"
 	"golang.org/x/net/publicsuffix"
 	"crypto/tls"
-	curl "github.com/andelf/go-curl"
 	"regexp"
 	"strings"
 	"io/ioutil"
@@ -247,24 +246,22 @@ func (o LoginOptions) Run() error {
 	nextLocation = resp.Header.Get("Location")
 	//fmt.Println(nextLocation)
 
-	// Send auth credentials
-	easy := curl.EasyInit()
-	htmlForm := ""
-	defer easy.Cleanup()
-	if easy == nil {
-		fmt.Println("Could not init CURL client")
+	// NTLM Send auth credentials
+	clientNTLM := http.Client {
+		Jar: jar,
+		Transport: &NtlmTransport {
+			User:     USERNAME,
+			Password: PASSWORD,
+		},
 	}
-	easy.Setopt(curl.OPT_URL, nextLocation)
-	easy.Setopt(curl.OPT_HEADER, true)
-	easy.Setopt(curl.OPT_HTTPHEADER, []string{"User-Agent: " + userAgent})
-	easy.Setopt(curl.OPT_HTTPAUTH, curl.AUTH_NTLM)
-	easy.Setopt(curl.OPT_USERPWD, USERNAME + ":" + PASSWORD)
-	easy.Setopt(curl.OPT_WRITEFUNCTION, func(ptr []byte, userdata interface{}) bool {
-		htmlForm = htmlForm + string(ptr)
-		return true
-	})
-	easy.Setopt(curl.OPT_WRITEDATA, htmlForm)
-	easy.Perform()
+	req, _ = http.NewRequest("GET", nextLocation, nil)
+	req.Header.Add("User-Agent", userAgent)
+	resp, err = clientNTLM.Do(req)
+	if err != nil {
+		return err
+	}
+	ntlmBodyBytes, _ := ioutil.ReadAll(resp.Body)
+	htmlForm := string(ntlmBodyBytes)
 	SAMLResponseRegex, _ := regexp.Compile("SAMLResponse\" value=\"(.*?)\"")
 	SAMLResponseMatch := SAMLResponseRegex.FindStringSubmatch(htmlForm)
 	if len(SAMLResponseMatch) < 1 {
