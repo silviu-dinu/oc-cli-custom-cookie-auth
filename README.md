@@ -1,16 +1,37 @@
 OpenShift Application Platform
 ==============================
 
+## Description
+
+`oc` command line tool patch to support ADFS/NTLM authentication.
+
+## Requirements
+
+ - Go 1.10 or higher
+ - Docker (optional)
+
+## Compiling on MacOS (with netcgo)
 ```
-# Install project
+$ git clone https://github.com/silviu-dinu/oc-cli-custom-cookie-auth ~/golang/src/github.com/openshift/origin
+$ cd ~/golang/src/github.com/openshift/origin
+$ make WHAT=cmd/oc GOFLAGS=-v
+```
+
+*`oc` binary will be saved to `_output/local/bin/darwin/amd64` location.*
+
+## Compiling for linux inside Docker (without netcgo)
+```
 $ git clone https://github.com/silviu-dinu/oc-cli-custom-cookie-auth
 $ cd oc-cli-custom-cookie-auth
-$ glide up -v
-
-# Compile cli to0ls
-$ make WHAT=cmd/oc GOFLAGS=-v
-
-# Set cookie as environment variable
-$ export COOKIE_SPX_STICKY_CLOUDLET='__spx_sticky_cloudlet=...'
-$ ./_output/local/bin/darwin/amd64/oc login https://os.example.com --token=<token>
+$ hack/env make WHAT=cmd/oc GOFLAGS=-v
 ```
+
+*`oc` binary will be saved to `_output/local/bin/linux/amd64` location.*
+
+## Caveats
+
+When project is cross-compiled (e.g.: from Linux targeting MacOS) the build will use `netgo` instead of `netcgo`. This might cause issues on MacOS systems behind VPN connections.
+
+## Original project
+
+https://github.com/openshift/origin
